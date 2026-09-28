@@ -11,7 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "../kselftest.h"
+#include "kselftest.h"
 #include "cgroup_util.h"
 
 enum hog_clock_type {
@@ -219,7 +219,7 @@ static int test_cpucg_stats(const char *root)
 	if (user_usec <= 0)
 		goto cleanup;
 
-	if (!values_close(usage_usec, expected_usage_usec, 1))
+	if (!values_close_report(usage_usec, expected_usage_usec, 1))
 		goto cleanup;
 
 	ret = KSFT_PASS;
@@ -278,7 +278,7 @@ static int test_cpucg_nice(const char *root)
 		char buf[64];
 		snprintf(buf, sizeof(buf), "%d", getpid());
 		if (cg_write(cpucg, "cgroup.procs", buf))
-			goto cleanup;
+			exit(EXIT_FAILURE);
 
 		/* Try to keep niced CPU usage as constrained to hog_cpu as possible */
 		nice(1);
@@ -291,7 +291,9 @@ static int test_cpucg_nice(const char *root)
 
 		user_usec = cg_read_key_long(cpucg, "cpu.stat", "user_usec");
 		nice_usec = cg_read_key_long(cpucg, "cpu.stat", "nice_usec");
-		if (!values_close(nice_usec, expected_nice_usec, 1))
+		if (user_usec <= 0)
+			goto cleanup;
+		if (!values_close_report(nice_usec, expected_nice_usec, 1))
 			goto cleanup;
 
 		ret = KSFT_PASS;
@@ -404,7 +406,7 @@ overprovision_validate(const struct cpu_hogger *children, int num_children)
 			goto cleanup;
 
 		delta = children[i + 1].usage - children[i].usage;
-		if (!values_close(delta, children[0].usage, 35))
+		if (!values_close_report(delta, children[0].usage, 35))
 			goto cleanup;
 	}
 
@@ -444,7 +446,7 @@ underprovision_validate(const struct cpu_hogger *children, int num_children)
 	int ret = KSFT_FAIL, i;
 
 	for (i = 0; i < num_children - 1; i++) {
-		if (!values_close(children[i + 1].usage, children[0].usage, 15))
+		if (!values_close_report(children[i + 1].usage, children[0].usage, 15))
 			goto cleanup;
 	}
 
@@ -573,16 +575,16 @@ run_cpucg_nested_weight_test(const char *root, bool overprovisioned)
 
 	nested_leaf_usage = leaf[1].usage + leaf[2].usage;
 	if (overprovisioned) {
-		if (!values_close(leaf[0].usage, nested_leaf_usage, 15))
+		if (!values_close_report(leaf[0].usage, nested_leaf_usage, 15))
 			goto cleanup;
-	} else if (!values_close(leaf[0].usage * 2, nested_leaf_usage, 15))
+	} else if (!values_close_report(leaf[0].usage * 2, nested_leaf_usage, 15))
 		goto cleanup;
 
 
 	child_usage = cg_read_key_long(child, "cpu.stat", "usage_usec");
 	if (child_usage <= 0)
 		goto cleanup;
-	if (!values_close(child_usage, nested_leaf_usage, 1))
+	if (!values_close_report(child_usage, nested_leaf_usage, 1))
 		goto cleanup;
 
 	ret = KSFT_PASS;
@@ -640,20 +642,48 @@ test_cpucg_nested_weight_underprovisioned(const char *root)
 }
 
 /*
+ * Best effort attempt to get the kernel's HZ value from the config.
+ * Return the HZ value if found otherwise return 1000 (the default) to
+ * indicate failure.
+ */
+static long
+get_config_hz(void)
+{
+	long hz = 1000;
+	FILE *f;
+	char cmd[256] = "zcat /proc/config.gz 2>/dev/null | grep '^CONFIG_HZ='";
+
+	f = popen(cmd, "r");
+
+	if (!f)
+		return hz;
+
+	if (fscanf(f, "CONFIG_HZ=%ld", &hz) == EOF)
+		goto out;
+
+out:
+	pclose(f);
+	return hz;
+}
+
+/*
  * This test creates a cgroup with some maximum value within a period, and
  * verifies that a process in the cgroup is not overscheduled.
  */
 static int test_cpucg_max(const char *root)
 {
 	int ret = KSFT_FAIL;
+	long hz = get_config_hz();
 	long quota_usec = 1000;
 	long default_period_usec = 100000; /* cpu.max's default period */
 	long duration_seconds = 1;
 
-	long duration_usec = duration_seconds * USEC_PER_SEC;
+	long duration_usec;
 	long usage_usec, n_periods, remainder_usec, expected_usage_usec;
 	char *cpucg;
 	char quota_buf[32];
+
+	duration_usec = duration_seconds * USEC_PER_SEC * 1000 / hz;
 
 	snprintf(quota_buf, sizeof(quota_buf), "%ld", quota_usec);
 
@@ -670,8 +700,8 @@ static int test_cpucg_max(const char *root)
 	struct cpu_hog_func_param param = {
 		.nprocs = 1,
 		.ts = {
-			.tv_sec = duration_seconds,
-			.tv_nsec = 0,
+			.tv_sec = duration_usec / USEC_PER_SEC,
+			.tv_nsec = duration_usec % USEC_PER_SEC * NSEC_PER_USEC,
 		},
 		.clock_type = CPU_HOG_CLOCK_WALL,
 	};
@@ -691,7 +721,7 @@ static int test_cpucg_max(const char *root)
 	expected_usage_usec
 		= n_periods * quota_usec + MIN(remainder_usec, quota_usec);
 
-	if (!values_close(usage_usec, expected_usage_usec, 10))
+	if (!values_close_report(usage_usec, expected_usage_usec, 10))
 		goto cleanup;
 
 	ret = KSFT_PASS;
@@ -710,14 +740,17 @@ cleanup:
 static int test_cpucg_max_nested(const char *root)
 {
 	int ret = KSFT_FAIL;
+	long hz = get_config_hz();
 	long quota_usec = 1000;
 	long default_period_usec = 100000; /* cpu.max's default period */
 	long duration_seconds = 1;
 
-	long duration_usec = duration_seconds * USEC_PER_SEC;
+	long duration_usec;
 	long usage_usec, n_periods, remainder_usec, expected_usage_usec;
 	char *parent, *child;
 	char quota_buf[32];
+
+	duration_usec = duration_seconds * USEC_PER_SEC * 1000 / hz;
 
 	snprintf(quota_buf, sizeof(quota_buf), "%ld", quota_usec);
 
@@ -741,8 +774,8 @@ static int test_cpucg_max_nested(const char *root)
 	struct cpu_hog_func_param param = {
 		.nprocs = 1,
 		.ts = {
-			.tv_sec = duration_seconds,
-			.tv_nsec = 0,
+			.tv_sec = duration_usec / USEC_PER_SEC,
+			.tv_nsec = duration_usec % USEC_PER_SEC * NSEC_PER_USEC,
 		},
 		.clock_type = CPU_HOG_CLOCK_WALL,
 	};
@@ -762,7 +795,7 @@ static int test_cpucg_max_nested(const char *root)
 	expected_usage_usec
 		= n_periods * quota_usec + MIN(remainder_usec, quota_usec);
 
-	if (!values_close(usage_usec, expected_usage_usec, 10))
+	if (!values_close_report(usage_usec, expected_usage_usec, 10))
 		goto cleanup;
 
 	ret = KSFT_PASS;
@@ -796,8 +829,9 @@ struct cpucg_test {
 int main(int argc, char *argv[])
 {
 	char root[PATH_MAX];
-	int i, ret = EXIT_SUCCESS;
+	int i;
 
+	ksft_print_header();
 	if (cg_find_unified_root(root, sizeof(root), NULL))
 		ksft_exit_skip("cgroup v2 isn't mounted\n");
 
@@ -805,6 +839,7 @@ int main(int argc, char *argv[])
 		if (cg_write(root, "cgroup.subtree_control", "+cpu"))
 			ksft_exit_skip("Failed to set cpu controller\n");
 
+	ksft_set_plan(ARRAY_SIZE(tests));
 	for (i = 0; i < ARRAY_SIZE(tests); i++) {
 		switch (tests[i].fn(root)) {
 		case KSFT_PASS:
@@ -814,11 +849,10 @@ int main(int argc, char *argv[])
 			ksft_test_result_skip("%s\n", tests[i].name);
 			break;
 		default:
-			ret = EXIT_FAILURE;
 			ksft_test_result_fail("%s\n", tests[i].name);
 			break;
 		}
 	}
 
-	return ret;
+	ksft_finished();
 }

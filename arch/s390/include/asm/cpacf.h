@@ -229,7 +229,7 @@ static __always_inline void __cpacf_query_rre(u32 opc, u8 r1, u8 r2,
 	asm volatile(
 		"	la	%%r1,%[pb]\n"
 		"	lghi	%%r0,%[fc]\n"
-		"	.insn	rre,%[opc] << 16,%[r1],%[r2]\n"
+		"	.insn	rre,%[opc] << 16,%[r1],%[r2]"
 		: [pb] "=R" (*pb)
 		: [opc] "i" (opc), [fc] "i" (fc),
 		  [r1] "i" (r1), [r2] "i" (r2)
@@ -242,7 +242,7 @@ static __always_inline void __cpacf_query_rrf(u32 opc, u8 r1, u8 r2, u8 r3,
 	asm volatile(
 		"	la	%%r1,%[pb]\n"
 		"	lghi	%%r0,%[fc]\n"
-		"	.insn	rrf,%[opc] << 16,%[r1],%[r2],%[r3],%[m4]\n"
+		"	.insn	rrf,%[opc] << 16,%[r1],%[r2],%[r3],%[m4]"
 		: [pb] "=R" (*pb)
 		: [opc] "i" (opc), [fc] "i" (fc), [r1] "i" (r1),
 		  [r2] "i" (r2), [r3] "i" (r3), [m4] "i" (m4)
@@ -301,6 +301,7 @@ static __always_inline void __cpacf_query(unsigned int opcode,
 					  cpacf_mask_t *mask)
 {
 	__cpacf_query_insn(opcode, mask, CPACF_FC_QUERY);
+	kmsan_unpoison_memory(mask, sizeof(*mask));
 }
 
 static __always_inline int __cpacf_check_opcode(unsigned int opcode)
@@ -370,6 +371,7 @@ static __always_inline int cpacf_query_func(unsigned int opcode,
 static __always_inline void __cpacf_qai(unsigned int opcode, cpacf_qai_t *qai)
 {
 	__cpacf_query_insn(opcode, qai, CPACF_FC_QUERY_AUTH_INFO);
+	kmsan_unpoison_memory(qai, sizeof(*qai));
 }
 
 /**
@@ -416,12 +418,13 @@ static inline int cpacf_km(unsigned long func, void *param,
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rre,%[opc] << 16,%[dst],%[src]\n"
-		"	brc	1,0b\n" /* handle partial completion */
+		"	brc	1,0b" /* handle partial completion */
 		: [src] "+&d" (s.pair), [dst] "+&d" (d.pair)
 		: [fc] "d" (func), [pba] "d" ((unsigned long)param),
 		  [opc] "i" (CPACF_KM)
 		: "cc", "memory", "0", "1");
 
+	kmsan_unpoison_memory(dest, src_len - s.odd);
 	return src_len - s.odd;
 }
 
@@ -448,12 +451,13 @@ static inline int cpacf_kmc(unsigned long func, void *param,
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rre,%[opc] << 16,%[dst],%[src]\n"
-		"	brc	1,0b\n" /* handle partial completion */
+		"	brc	1,0b" /* handle partial completion */
 		: [src] "+&d" (s.pair), [dst] "+&d" (d.pair)
 		: [fc] "d" (func), [pba] "d" ((unsigned long)param),
 		  [opc] "i" (CPACF_KMC)
 		: "cc", "memory", "0", "1");
 
+	kmsan_unpoison_memory(dest, src_len - s.odd);
 	return src_len - s.odd;
 }
 
@@ -476,7 +480,7 @@ static inline void cpacf_kimd(unsigned long func, void *param,
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rrf,%[opc] << 16,0,%[src],8,0\n"
-		"	brc	1,0b\n" /* handle partial completion */
+		"	brc	1,0b" /* handle partial completion */
 		: [src] "+&d" (s.pair)
 		: [fc] "d" (func), [pba] "d" ((unsigned long)(param)),
 		  [opc] "i" (CPACF_KIMD)
@@ -501,7 +505,7 @@ static inline void cpacf_klmd(unsigned long func, void *param,
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rrf,%[opc] << 16,0,%[src],8,0\n"
-		"	brc	1,0b\n" /* handle partial completion */
+		"	brc	1,0b" /* handle partial completion */
 		: [src] "+&d" (s.pair)
 		: [fc] "d" (func), [pba] "d" ((unsigned long)param),
 		  [opc] "i" (CPACF_KLMD)
@@ -530,7 +534,7 @@ static inline int _cpacf_kmac(unsigned long *gr0, void *param,
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rre,%[opc] << 16,0,%[src]\n"
 		"	brc	1,0b\n" /* handle partial completion */
-		"	lgr	%[r0],0\n"
+		"	lgr	%[r0],0"
 		: [r0] "+d" (*gr0), [src] "+&d" (s.pair)
 		: [pba] "d" ((unsigned long)param),
 		  [opc] "i" (CPACF_KMAC)
@@ -580,13 +584,14 @@ static inline int cpacf_kmctr(unsigned long func, void *param, u8 *dest,
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rrf,%[opc] << 16,%[dst],%[src],%[ctr],0\n"
-		"	brc	1,0b\n" /* handle partial completion */
+		"	brc	1,0b" /* handle partial completion */
 		: [src] "+&d" (s.pair), [dst] "+&d" (d.pair),
 		  [ctr] "+&d" (c.pair)
 		: [fc] "d" (func), [pba] "d" ((unsigned long)param),
 		  [opc] "i" (CPACF_KMCTR)
 		: "cc", "memory", "0", "1");
 
+	kmsan_unpoison_memory(dest, src_len - s.odd);
 	return src_len - s.odd;
 }
 
@@ -614,11 +619,12 @@ static inline void cpacf_prno(unsigned long func, void *param,
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rre,%[opc] << 16,%[dst],%[seed]\n"
-		"	brc	1,0b\n"	  /* handle partial completion */
+		"	brc	1,0b"	  /* handle partial completion */
 		: [dst] "+&d" (d.pair)
 		: [fc] "d" (func), [pba] "d" ((unsigned long)param),
 		  [seed] "d" (s.pair), [opc] "i" (CPACF_PRNO)
 		: "cc", "memory", "0", "1");
+	kmsan_unpoison_memory(dest, dest_len);
 }
 
 /**
@@ -640,7 +646,7 @@ static inline void cpacf_trng(u8 *ucbuf, unsigned long ucbuf_len,
 	asm volatile (
 		"	lghi	0,%[fc]\n"
 		"0:	.insn	rre,%[opc] << 16,%[ucbuf],%[cbuf]\n"
-		"	brc	1,0b\n"	  /* handle partial completion */
+		"	brc	1,0b"	  /* handle partial completion */
 		: [ucbuf] "+&d" (u.pair), [cbuf] "+&d" (c.pair)
 		: [fc] "K" (CPACF_PRNO_TRNG), [opc] "i" (CPACF_PRNO)
 		: "cc", "memory", "0");
@@ -692,7 +698,7 @@ static inline void cpacf_pckmo(long func, void *param)
 	asm volatile(
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
-		"       .insn   rre,%[opc] << 16,0,0\n" /* PCKMO opcode */
+		"       .insn   rre,%[opc] << 16,0,0" /* PCKMO opcode */
 		:
 		: [fc] "d" (func), [pba] "d" ((unsigned long)param),
 		  [opc] "i" (CPACF_PCKMO)
@@ -725,7 +731,7 @@ static inline void cpacf_kma(unsigned long func, void *param, u8 *dest,
 		"	lgr	0,%[fc]\n"
 		"	lgr	1,%[pba]\n"
 		"0:	.insn	rrf,%[opc] << 16,%[dst],%[src],%[aad],0\n"
-		"	brc	1,0b\n"	/* handle partial completion */
+		"	brc	1,0b"	/* handle partial completion */
 		: [dst] "+&d" (d.pair), [src] "+&d" (s.pair),
 		  [aad] "+&d" (a.pair)
 		: [fc] "d" (func), [pba] "d" ((unsigned long)param),

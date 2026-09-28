@@ -314,7 +314,7 @@ struct snp_msg_desc {
 
 	struct snp_secrets_page *secrets;
 
-	struct aesgcm_ctx *ctx;
+	struct aes_gcm_key *gcm_key;
 
 	u32 *os_area_msg_seqno;
 	u8 *vmpck;
@@ -491,8 +491,7 @@ static inline int pvalidate(unsigned long vaddr, bool rmp_psize, bool validate)
 
 	/* "pvalidate" mnemonic support in binutils 2.36 and newer */
 	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
-		     CC_SET(c)
-		     : CC_OUT(c) (no_rmpupdate), "=a"(rc)
+		     : "=@ccc"(no_rmpupdate), "=a"(rc)
 		     : "a"(vaddr), "c"(rmp_psize), "d"(validate)
 		     : "memory", "cc");
 
@@ -662,6 +661,8 @@ static inline void snp_leak_pages(u64 pfn, unsigned int pages)
 {
 	__snp_leak_pages(pfn, pages, true);
 }
+int snp_prepare(void);
+void snp_shutdown(void);
 #else
 static inline bool snp_probe_rmptable_info(void) { return false; }
 static inline int snp_rmptable_init(void) { return -ENOSYS; }
@@ -678,6 +679,8 @@ static inline void __snp_leak_pages(u64 pfn, unsigned int npages, bool dump_rmp)
 static inline void snp_leak_pages(u64 pfn, unsigned int npages) {}
 static inline void kdump_sev_callback(void) { }
 static inline void snp_fixup_e820_tables(void) {}
+static inline int snp_prepare(void) { return -ENODEV; }
+static inline void snp_shutdown(void) {}
 #endif
 
 #endif

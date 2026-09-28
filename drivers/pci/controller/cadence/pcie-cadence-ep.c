@@ -255,7 +255,7 @@ static int cdns_pcie_ep_get_msi(struct pci_epc *epc, u8 fn, u8 vfn)
 	u16 flags, mme;
 	u8 cap;
 
-	cap = cdns_pcie_find_capability(pcie, PCI_CAP_ID_MSIX);
+	cap = cdns_pcie_find_capability(pcie, PCI_CAP_ID_MSI);
 	fn = cdns_pcie_get_fn_from_vfn(pcie, fn, vfn);
 
 	/* Validate that the MSI feature is actually enabled. */
@@ -655,6 +655,7 @@ void cdns_pcie_ep_disable(struct cdns_pcie_ep *ep)
 	struct device *dev = ep->pcie.dev;
 	struct pci_epc *epc = to_pci_epc(dev);
 
+	cdns_pcie_debugfs_deinit(&ep->pcie);
 	pci_epc_deinit_notify(epc);
 	pci_epc_mem_free_addr(epc, ep->irq_phys_addr, ep->irq_cpu_addr,
 			      SZ_128K);
@@ -760,6 +761,8 @@ int cdns_pcie_ep_setup(struct cdns_pcie_ep *ep)
 	spin_lock_init(&ep->lock);
 
 	pci_epc_init_notify(epc);
+
+	cdns_pcie_debugfs_init(pcie);
 
 	return 0;
 

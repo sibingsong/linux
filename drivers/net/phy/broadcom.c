@@ -405,7 +405,7 @@ static int bcm5481x_set_brrmode(struct phy_device *phydev, bool on)
 static int bcm54811_config_init(struct phy_device *phydev)
 {
 	struct bcm54xx_phy_priv *priv = phydev->priv;
-	int err, reg, exp_sync_ethernet;
+	int err, reg, exp_sync_ethernet, aux_rgmii_en;
 
 	/* Enable CLK125 MUX on LED4 if ref clock is enabled. */
 	if (!(phydev->dev_flags & PHY_BRCM_RX_REFCLK_UNUSED)) {
@@ -431,6 +431,24 @@ static int bcm54811_config_init(struct phy_device *phydev)
 	err = bcm_phy_modify_exp(phydev, BCM_EXP_SYNC_ETHERNET,
 				 BCM_EXP_SYNC_ETHERNET_MII_LITE,
 				 exp_sync_ethernet);
+	if (err < 0)
+		return err;
+
+	/* Enable RGMII if configured */
+	if (phy_interface_is_rgmii(phydev))
+		aux_rgmii_en = MII_BCM54XX_AUXCTL_SHDWSEL_MISC_RGMII_EN |
+			       MII_BCM54XX_AUXCTL_SHDWSEL_MISC_RGMII_SKEW_EN;
+	else
+		aux_rgmii_en = 0;
+
+	/* Also writing Reserved bits 6:5 because the documentation requires
+	 * them to be written to 0b11
+	 */
+	err = bcm54xx_auxctl_write(phydev,
+				   MII_BCM54XX_AUXCTL_SHDWSEL_MISC,
+				   MII_BCM54XX_AUXCTL_MISC_WREN |
+				   aux_rgmii_en |
+				   MII_BCM54XX_AUXCTL_SHDWSEL_MISC_RSVD);
 	if (err < 0)
 		return err;
 
@@ -574,7 +592,12 @@ static int bcm54xx_set_wakeup_irq(struct phy_device *phydev, bool state)
 
 static int bcm54xx_suspend(struct phy_device *phydev)
 {
+	struct bcm54xx_phy_priv *priv = phydev->priv;
 	int ret = 0;
+
+	mutex_lock(&phydev->lock);
+	bcm_phy_update_stats_shadow(phydev, priv->stats);
+	mutex_unlock(&phydev->lock);
 
 	bcm54xx_ptp_stop(phydev);
 
@@ -1434,6 +1457,12 @@ static int bcm54811_read_status(struct phy_device *phydev)
 	return genphy_read_status(phydev);
 }
 
+static int bcm54xx_disable_autonomous_eee(struct phy_device *phydev)
+{
+	return bcm_phy_modify_exp(phydev, BCM54XX_TOP_MISC_MII_BUF_CNTL0,
+				  BCM54XX_MII_BUF_CNTL0_AUTOGREEEN_EN, 0);
+}
+
 static struct phy_driver broadcom_drivers[] = {
 {
 	PHY_ID_MATCH_MODEL(PHY_ID_BCM5411),
@@ -1477,6 +1506,7 @@ static struct phy_driver broadcom_drivers[] = {
 	.get_wol	= bcm54xx_phy_get_wol,
 	.set_wol	= bcm54xx_phy_set_wol,
 	.led_brightness_set	= bcm_phy_led_brightness_set,
+	.disable_autonomous_eee	= bcm54xx_disable_autonomous_eee,
 }, {
 	PHY_ID_MATCH_MODEL(PHY_ID_BCM5461),
 	.name		= "Broadcom BCM5461",

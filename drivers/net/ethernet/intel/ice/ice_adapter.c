@@ -55,13 +55,15 @@ static struct ice_adapter *ice_adapter_new(struct pci_dev *pdev)
 {
 	struct ice_adapter *adapter;
 
-	adapter = kzalloc(sizeof(*adapter), GFP_KERNEL);
+	adapter = kzalloc_obj(*adapter);
 	if (!adapter)
 		return NULL;
 
 	adapter->index = ice_adapter_index(pdev);
 	spin_lock_init(&adapter->ptp_gltsyn_time_lock);
 	spin_lock_init(&adapter->txq_ctx_lock);
+	for (int i = 0; i < ARRAY_SIZE(adapter->cpi_phy_lock); i++)
+		mutex_init(&adapter->cpi_phy_lock[i]);
 	refcount_set(&adapter->refcount, 1);
 
 	mutex_init(&adapter->ports.lock);
@@ -73,6 +75,8 @@ static struct ice_adapter *ice_adapter_new(struct pci_dev *pdev)
 static void ice_adapter_free(struct ice_adapter *adapter)
 {
 	WARN_ON(!list_empty(&adapter->ports.ports));
+	for (int i = 0; i < ARRAY_SIZE(adapter->cpi_phy_lock); i++)
+		mutex_destroy(&adapter->cpi_phy_lock[i]);
 	mutex_destroy(&adapter->ports.lock);
 
 	kfree(adapter);
@@ -99,19 +103,21 @@ struct ice_adapter *ice_adapter_get(struct pci_dev *pdev)
 
 	index = ice_adapter_xa_index(pdev);
 	scoped_guard(mutex, &ice_adapters_mutex) {
-		err = xa_insert(&ice_adapters, index, NULL, GFP_KERNEL);
-		if (err == -EBUSY) {
-			adapter = xa_load(&ice_adapters, index);
+		adapter = xa_load(&ice_adapters, index);
+		if (adapter) {
 			refcount_inc(&adapter->refcount);
 			WARN_ON_ONCE(adapter->index != ice_adapter_index(pdev));
 			return adapter;
 		}
+		err = xa_reserve(&ice_adapters, index, GFP_KERNEL);
 		if (err)
 			return ERR_PTR(err);
 
 		adapter = ice_adapter_new(pdev);
-		if (!adapter)
+		if (!adapter) {
+			xa_release(&ice_adapters, index);
 			return ERR_PTR(-ENOMEM);
+		}
 		xa_store(&ice_adapters, index, adapter, GFP_KERNEL);
 	}
 	return adapter;

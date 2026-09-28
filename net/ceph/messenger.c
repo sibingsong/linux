@@ -368,8 +368,8 @@ static void ceph_sock_write_space(struct sock *sk)
 	/* only queue to workqueue if there is data we want to write,
 	 * and there is sufficient space in the socket buffer to accept
 	 * more data.  clear SOCK_NOSPACE so that ceph_sock_write_space()
-	 * doesn't get called again until try_write() fills the socket
-	 * buffer. See net/ipv4/tcp_input.c:tcp_check_space()
+	 * doesn't get called again until ceph_con_v[12]_try_write() fills
+	 * the socket buffer. See net/ipv4/tcp_input.c:tcp_check_space()
 	 * and net/core/stream.c:sk_stream_write_space().
 	 */
 	if (ceph_con_flag_test(con, CEPH_CON_F_WRITE_PENDING)) {
@@ -460,7 +460,7 @@ int ceph_tcp_connect(struct ceph_connection *con)
 	set_sock_callbacks(sock, con);
 
 	con_sock_state_connecting(con);
-	ret = kernel_connect(sock, (struct sockaddr *)&ss, sizeof(ss),
+	ret = kernel_connect(sock, (struct sockaddr_unsized *)&ss, sizeof(ss),
 			     O_NONBLOCK);
 	if (ret == -EINPROGRESS) {
 		dout("connect %s EINPROGRESS sk_state = %u\n",
@@ -762,7 +762,7 @@ static bool ceph_msg_data_bio_advance(struct ceph_msg_data_cursor *cursor,
 	if (!cursor->resid)
 		return false;   /* no more data */
 
-	if (!bytes || (it->iter.bi_size && it->iter.bi_bvec_done &&
+	if (!bytes || (it->iter.bi_size && it->iter.bi_offset &&
 		       page == bio_iter_page(it->bio, it->iter)))
 		return false;	/* more bytes to process in this segment */
 
@@ -817,7 +817,7 @@ static bool ceph_msg_data_bvecs_advance(struct ceph_msg_data_cursor *cursor,
 	if (!cursor->resid)
 		return false;   /* no more data */
 
-	if (!bytes || (cursor->bvec_iter.bi_bvec_done &&
+	if (!bytes || (cursor->bvec_iter.bi_offset &&
 		       page == bvec_iter_page(bvecs, cursor->bvec_iter)))
 		return false;	/* more bytes to process in this segment */
 
@@ -1003,7 +1003,6 @@ static struct page *ceph_msg_data_iter_next(struct ceph_msg_data_cursor *cursor,
 	 *	  we'll get an iov_iter_get_pages2 variant that doesn't take
 	 *	  page refs. Until then, just put the page ref.
 	 */
-	VM_BUG_ON_PAGE(!PageWriteback(page) && page_count(page) < 2, page);
 	put_page(page);
 
 	*length = min_t(size_t, len, cursor->resid);
@@ -1794,9 +1793,9 @@ void ceph_msg_revoke(struct ceph_msg *msg)
 		WARN_ON(con->state != CEPH_CON_S_OPEN);
 		dout("%s con %p msg %p was sending\n", __func__, con, msg);
 		if (ceph_msgr2(from_msgr(con->msgr)))
-			ceph_con_v2_revoke(con);
+			ceph_con_v2_revoke(con, msg);
 		else
-			ceph_con_v1_revoke(con);
+			ceph_con_v1_revoke(con, msg);
 		ceph_msg_put(con->out_msg);
 		con->out_msg = NULL;
 	} else {
@@ -1993,8 +1992,7 @@ struct ceph_msg *ceph_msg_new2(int type, int front_len, int max_data_items,
 	m->front_alloc_len = m->front.iov_len = front_len;
 
 	if (max_data_items) {
-		m->data = kmalloc_array(max_data_items, sizeof(*m->data),
-					flags);
+		m->data = kmalloc_objs(*m->data, max_data_items, flags);
 		if (!m->data)
 			goto out2;
 
@@ -2111,11 +2109,13 @@ int ceph_con_in_msg_alloc(struct ceph_connection *con,
 	return ret;
 }
 
-void ceph_con_get_out_msg(struct ceph_connection *con)
+struct ceph_msg *ceph_con_get_out_msg(struct ceph_connection *con)
 {
 	struct ceph_msg *msg;
 
-	BUG_ON(list_empty(&con->out_queue));
+	if (list_empty(&con->out_queue))
+		return NULL;
+
 	msg = list_first_entry(&con->out_queue, struct ceph_msg, list_head);
 	WARN_ON(msg->con != con);
 
@@ -2142,7 +2142,7 @@ void ceph_con_get_out_msg(struct ceph_connection *con)
 	 * message or in case of a fault.
 	 */
 	WARN_ON(con->out_msg);
-	con->out_msg = ceph_msg_get(msg);
+	return con->out_msg = ceph_msg_get(msg);
 }
 
 /*

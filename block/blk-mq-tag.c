@@ -13,6 +13,7 @@
 #include <linux/kmemleak.h>
 
 #include <linux/delay.h>
+#include <trace/events/block.h>
 #include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-sched.h"
@@ -180,6 +181,11 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 		tag = __blk_mq_get_tag(data, bt);
 		if (tag != BLK_MQ_NO_TAG)
 			break;
+
+		/* Log the starvation event before altering task state */
+		trace_block_rq_tag_wait(data->q, data->hctx,
+					data->rq_flags & RQF_SCHED_TAGS,
+					data->flags);
 
 		sbitmap_prepare_to_wait(bt, ws, &wait, TASK_UNINTERRUPTIBLE);
 
@@ -499,7 +505,7 @@ void blk_mq_queue_tag_busy_iter(struct request_queue *q, busy_tag_iter_fn *fn,
 	int srcu_idx;
 
 	/*
-	 * __blk_mq_update_nr_hw_queues() updates nr_hw_queues and hctx_table
+	 * __blk_mq_update_nr_hw_queues() updates nr_hw_queues and queue_hw_ctx
 	 * while the queue is frozen. So we can use q_usage_counter to avoid
 	 * racing with it.
 	 */
@@ -622,10 +628,11 @@ void blk_mq_tag_resize_shared_tags(struct blk_mq_tag_set *set, unsigned int size
 	sbitmap_queue_resize(&tags->bitmap_tags, size - set->reserved_tags);
 }
 
-void blk_mq_tag_update_sched_shared_tags(struct request_queue *q)
+void blk_mq_tag_update_sched_shared_tags(struct request_queue *q,
+					 unsigned int nr)
 {
 	sbitmap_queue_resize(&q->sched_shared_tags->bitmap_tags,
-			     q->nr_requests - q->tag_set->reserved_tags);
+			     nr - q->tag_set->reserved_tags);
 }
 
 /**

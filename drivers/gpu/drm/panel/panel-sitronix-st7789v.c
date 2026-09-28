@@ -14,6 +14,7 @@
 
 #include <drm/drm_device.h>
 #include <drm/drm_modes.h>
+#include <drm/drm_of.h>
 #include <drm/drm_panel.h>
 
 #define ST7789V_RAMCTRL_CMD		0xb0
@@ -249,6 +250,11 @@ static const struct drm_display_mode default_mode = {
 	.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
 };
 
+/*
+ * The mode data for this panel has been reverse engineered without access
+ * to the panel datasheet / manual. Using DRM_MODE_FLAG_PHSYNC like all
+ * other panels results in garbage data on the display.
+ */
 static const struct drm_display_mode t28cp45tn89_mode = {
 	.clock = 6008,
 	.hdisplay = 240,
@@ -261,7 +267,7 @@ static const struct drm_display_mode t28cp45tn89_mode = {
 	.vtotal = 320 + 8 + 4 + 4,
 	.width_mm = 43,
 	.height_mm = 57,
-	.flags = DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_NVSYNC,
+	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_PVSYNC,
 };
 
 static const struct drm_display_mode et028013dma_mode = {
@@ -641,7 +647,7 @@ static int st7789v_probe(struct spi_device *spi)
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to get backlight\n");
 
-	ret = of_drm_get_panel_orientation(spi->dev.of_node, &ctx->orientation);
+	ret = drm_of_get_panel_orientation(spi->dev.of_node, &ctx->orientation);
 	if (ret)
 		return dev_err_probe(&spi->dev, ret, "Failed to get orientation\n");
 

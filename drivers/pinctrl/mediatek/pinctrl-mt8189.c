@@ -1642,9 +1642,7 @@ static const struct mtk_pin_reg_calc mt8189_reg_cals[PINCTRL_PIN_REG_MAX] = {
 };
 
 static const char * const mt8189_pinctrl_register_base_names[] = {
-	"gpio_base", "iocfg_bm0_base", "iocfg_bm1_base", "iocfg_bm2_base", "iocfg_lm_base",
-	"iocfg_lt0_base", "iocfg_lt1_base", "iocfg_rb0_base", "iocfg_rb1_base",
-	"iocfg_rt_base"
+	"base", "bm0", "bm1", "bm2", "lm",  "lt0", "lt1", "rb0", "rb1", "rt",
 };
 
 static const struct mtk_eint_hw mt8189_eint_hw = {
@@ -1681,6 +1679,7 @@ static const struct of_device_id mt8189_pinctrl_of_match[] = {
 	{ .compatible = "mediatek,mt8189-pinctrl", .data = &mt8189_data },
 	{ /* sentinel */ }
 };
+MODULE_DEVICE_TABLE(of, mt8189_pinctrl_of_match);
 
 static struct platform_driver mt8189_pinctrl_driver = {
 	.driver = {
@@ -1698,3 +1697,4 @@ static int __init mt8189_pinctrl_init(void)
 arch_initcall(mt8189_pinctrl_init);
 
 MODULE_DESCRIPTION("MediaTek MT8189 Pinctrl Driver");
+MODULE_LICENSE("GPL v2");

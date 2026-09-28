@@ -101,7 +101,7 @@ static unsigned long diag324(unsigned long subcode, void *addr)
 	union register_pair rp = { .even = (unsigned long)addr };
 
 	diag_stat_inc(DIAG_STAT_X324);
-	asm volatile("diag	%[rp],%[subcode],0x324\n"
+	asm volatile("diag	%[rp],%[subcode],0x324"
 		     : [rp] "+d" (rp.pair)
 		     : [subcode] "d" (subcode)
 		     : "memory");
@@ -182,8 +182,7 @@ long diag324_pibbuf(unsigned long arg)
 		goto out;
 	rc = copy_to_user((void __user *)address, data->pib, data->pib->len);
 	rc |= put_user(data->sequence, &udata->sequence);
-	if (rc)
-		rc = -EFAULT;
+	rc = rc ? -EFAULT : data->rc;
 out:
 	mutex_unlock(&pibmutex);
 	return rc;
